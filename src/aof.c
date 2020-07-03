@@ -587,6 +587,7 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
 
     /* The DB this command was targeting is not the same as the last command
      * we appended. To issue a SELECT command is needed. */
+    // 如果当前命令涉及的数据库与server.aof_selected_db指明的数据库不一致，需要加入SELECT命令显式设置
     if (dictid != server.aof_selected_db) {
         char seldb[64];
 
@@ -596,12 +597,17 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         server.aof_selected_db = dictid;
     }
 
+    // 处理EXPIRE, SETEX, EXPIREAT命令
     if (cmd->proc == expireCommand || cmd->proc == pexpireCommand ||
         cmd->proc == expireatCommand) {
         /* Translate EXPIRE/PEXPIRE/EXPIREAT into PEXPIREAT */
+        // 将EXPIRE/PEXPIRE/EXPIREAT命令都转换为PEXPIREAT命令
         buf = catAppendOnlyExpireAtCommand(buf,cmd,argv[1],argv[2]);
-    } else if (cmd->proc == setexCommand || cmd->proc == psetexCommand) {
+    }
+        // 处理SETEX、PSETEX命令
+    else if (cmd->proc == setexCommand || cmd->proc == psetexCommand) {
         /* Translate SETEX/PSETEX to SET and PEXPIREAT */
+        // 将SETEX/PSETEX命令转换为SET命令和PEXPIREAT命令
         tmpargv[0] = createStringObject("SET",3);
         tmpargv[1] = argv[1];
         tmpargv[2] = argv[3];
@@ -633,12 +639,16 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         /* All the other commands don't need translation or need the
          * same translation already operated in the command vector
          * for the replication itself. */
+        // 其它命令使用catAppendOnlyGenericCommand（）函数处理
+        // 所有其它命令并不需要转换操作或者已经完成转换
         buf = catAppendOnlyGenericCommand(buf,argc,argv);
     }
 
     /* Append to the AOF buffer. This will be flushed on disk just before
      * of re-entering the event loop, so before the client will get a
      * positive reply about the operation performed. */
+    // 将重构后的命令字符串追加到AOF缓冲区中。AOF缓冲区中的数据会在重新进入时间循环前写入磁盘中，相应的客户端
+    // 也会受到一个关于此次操作的回复消息
     if (server.aof_state == AOF_ON)
         server.aof_buf = sdscatlen(server.aof_buf,buf,sdslen(buf));
 
@@ -646,6 +656,8 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
      * accumulate the differences between the child DB and the current one
      * in a buffer, so that when the child process will do its work we
      * can append the differences to the new append only file. */
+    // 如果后台正在执行AOF文件重写操作（即BGREWRITEAOF命令），为了记录当前正在重写的AOF文件和当前数据库的
+    // 差异信息，我们还需要将重构后的命令追加到AOF重写缓存中。
     if (server.aof_child_pid != -1)
         aofRewriteBufferAppend((unsigned char*)buf,sdslen(buf));
 
@@ -1217,7 +1229,7 @@ int rewriteStreamObject(rio *r, robj *key, robj *o) {
         /* Use the XADD MAXLEN 0 trick to generate an empty stream if
          * the key we are serializing is an empty string, which is possible
          * for the Stream type. */
-        id.ms = 0; id.seq = 1; 
+        id.ms = 0; id.seq = 1;
         if (rioWriteBulkCount(r,'*',7) == 0) return 0;
         if (rioWriteBulkString(r,"XADD",4) == 0) return 0;
         if (rioWriteBulkObject(r,key) == 0) return 0;
